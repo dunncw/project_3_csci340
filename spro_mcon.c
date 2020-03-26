@@ -4,150 +4,183 @@
 #include <pthread.h>
 #include <semaphore.h>
 #include <string.h>
+#include <ctype.h>
 
 // there is some problem with make file so juat coppy gcc line for now and complie that way if u can figure out the problem with the makefile feel free to fix
 
-sem_t mutex; 
+//new 
+// Definition of a queue
 
-typedef struct __node_t {
-    
-    char * line;
-    struct __node_t * next;
-    
-} node_t;
+typedef struct {
+    int             fill;                                    
+    int             use;                                     
+    int             q_len;                                   
+    char**           buffer;                                 
+    pthread_mutex_t queue_lock;
+    sem_t           empty;
+    sem_t           full;
+} QUEUE;
 
-typedef struct __queue_t { 
-    
-    node_t *        head;
-    node_t *        tail;
-    pthread_mutex_t head_lock;
-    pthread_mutex_t tail_lock;
-
-} queue_t;
-
-void Queue_Init(queue_t *q) {
-    
-    node_t *tmp = malloc(sizeof(node_t));
-    tmp->next = NULL;
-    q->head = q->tail = tmp;
-    
-    pthread_mutex_init(&q->head_lock, NULL);
-    pthread_mutex_init(&q->tail_lock, NULL);
-    
-}
-
-void Queue_Enqueue(queue_t * q, char * value) {
-    
-    node_t *tmp = malloc(sizeof(node_t));  //Get a new node
-    if (tmp == NULL) {                           
-        perror("malloc");
-        exit(1);
-    }
-
-    assert(tmp != NULL);
-    tmp->line = value;                           //Set the node's contents 
-    tmp->next  = NULL;                            //Show it's the tail
-
-    pthread_mutex_lock(&q->tail_lock);          // this is where the lock should be placed
-    q->tail->next = tmp;                          //Point old tail to new tail
-    q->tail = tmp;                                //Point tail to new node
-    pthread_mutex_unlock(&q->tail_lock);
-    
-}
-
-int Queue_Dequeue(queue_t * q) {
-
-    int rc = -1;
-    
-    if (q->head->next != NULL) {
-        pthread_mutex_lock(&q->head_lock);
-        char *value = q->head->next->line;             /* Return the value */
-        node_t *tmp = q->head->next;                    /* Save the old head node pointer */
-        q->head->next = q->head->next->next;                   /* Reset the head */
-        pthread_mutex_unlock(&q->head_lock);      /* Unlock the list */
-        free(tmp);                                /* Free the old head node */
-        rc = 0;
-    }
-    
-    
-    return rc;
-    
-}
+// Thread data producer
 
 typedef struct {
 
-    queue_t* ptr;
+    QUEUE* q;
+    
+} producer_data;
 
-} p_struct_t;
+// Thread data consumer
 
-void *producer(void *arg) { // this method needs work
+typedef struct {
+    QUEUE* q;
+    
+} consumer_data;
 
-    p_struct_t *mys = arg; // ||THE POINTER TO MY QUEUE IS WRONG ITS NOT PASSING THE POINTER CORRECLTY
+// Queue management functions
+
+void put(QUEUE *q,
+         char*    line)
+{
+
+    assert(sem_wait(&q->empty) == 0);
+    assert(pthread_mutex_lock(&q->queue_lock) == 0);
+
+    q->buffer[q->fill] = line;
+    q->fill = (q->fill + 1) % q->q_len;
+
+    assert(pthread_mutex_unlock(&q->queue_lock) == 0);
+    assert(sem_post(&q->full) == 0);
+
+}
+
+char* get(QUEUE * q)
+{
+
+    assert(sem_wait(&q->full) == 0);
+    assert(pthread_mutex_lock(&q->queue_lock) == 0);
+
+    char* tmp = q->buffer[q->use];
+    q->use = (q->use + 1) % q->q_len;
+
+    assert(pthread_mutex_unlock(&q->queue_lock) == 0);
+    assert(sem_post(&q->empty) == 0);
+
+    return tmp;
+    
+}
+
+
+char* trim_ws(char *str){ // this method needs work
+
+	char *return_str = strdup(str);
+    char *end;
+
+    if(*return_str == 0){
+        return_str[0] = '.';
+        return_str[1] = '\0';
+        return return_str;
+    }
+
+    end = return_str + strlen(return_str) - 1;
+
+    // removing leading whitespace
+    while (isspace((unsigned char)*return_str)) {
+        return_str++;
+    }
+
+    // removing trailing whitespace
+    while(end > str && isspace((unsigned char)*end)) {
+		end--;
+    }
+
+    // truncating trailing whitespace here
+    end[1] = '\0';
+
+    return return_str;
+}
+
+// Thread functions:
+// Thread functions producer
+
+void * producer_fn(void * args){
+
+    producer_data* data = (producer_data*)args;
 
     // Open the file for reading
     char *line_buf = NULL; // a pointer to the line being read
     size_t line_buf_sz = 0; //gets the size of the line
     int line_count = 0; // a simple counter that will keep track of the number of lines that are read in from stdin
     ssize_t line_size; // holds the size of each line as it is being read in | needs to be singed size_t cuz the last line is a neg num
+    char* trimed = NULL;
 
     // Get the first line of the file
-    sem_wait(&mutex);
     line_size = getline(&line_buf, &line_buf_sz, stdin);
     printf("line[%06d]: chars=%06zd, buf size=%06zu, contents: %s", line_count, line_size, line_buf_sz, line_buf);
-    Queue_Enqueue(mys->ptr, line_buf);
-    
-    sem_post(&mutex);
-    
-/*
+
     // Loop through until we are done with the file
     while (line_size >= 0) {
-        sem_wait(&mutex);
-        line_count++;
+        if(line_size != 0) {//skip any line that is empty
+            line_count++;
+            trimed = trim_ws(line_buf); // trim any whitespace from the line at the front and back but not spaces inbetween words
+            put(data->q, trimed);
 
-        // Show the line details
-        //printf("line[%06d]: chars=%06zd, buf size=%06zu, contents: %s", line_count, line_size, line_buf_sz, line_buf);
+            //tessting stuff
+            // Show the line details
+            printf("P| line[%06d]: contents: <%s>\n", line_count, trimed);
+        }
 
         line_size = getline(&line_buf, &line_buf_sz, stdin);
-        sem_post(&mutex);
     }
-*/
-    
+
     // every time the line is larger than the allocated buffer it increases the buffer sz so its probs very large by the end of the file so we will free the allocated line buffer
     free(line_buf);
     line_buf = NULL;
 
+    char* end = "..";
+    put(data->q, end);// the files can't have any non alpha chars so we can use that to send signals || '+' for us is gonna be the end of the file
+  
+    return NULL;      
+}
+
+/*
+// Thread functions consumer
+
+void * stage_1_fn(void * args)
+{
+
+    STAGE_1_DATA* data = (STAGE_1_DATA*)args;
+
+    for (int i = 0; i < data->n_items; i++) {
+
+        put(data->q_out, i);
+        printf("Stage1: %d\n", i);
+        
+    }
+
+    put(data->q_out, -1);
+    
+    printf("Stage1: Terminating\n");
+    
     return NULL;
+        
 }
+*/
 
-void display_q(node_t *head)
-{
-    if(head == NULL)
-    {
-        printf("\n");
-    }
-    else
-    {
-        printf("<%s>\n", head->line);
-        display_q(head->next);
-    }
-}
+int count_lines(){
 
-char *trim_ws(char *str) // this method needs work
-{
-    char *end;
+    int count = 0;
+    char *line_buf = NULL; // a pointer to the line being read
+    size_t line_buf_sz = 0; //gets the size of the line
+    
 
-    if(*str == 0){
-        str[0] = '.';
-        str[1] = '\0';
-        return str;
+    for (ssize_t line_size = getline(&line_buf, &line_buf_sz, stdin); line_size >= 0; line_size = getline(&line_buf, &line_buf_sz, stdin)){
+
+        if (line_size != 0) // Increment count if this character is newline 
+            count = count + 1; 
     }
 
-    end = str + strlen(str) - 1;
-    while(end > str && isspace((unsigned char)*end)) end--;
+    return count;
 
-    end[1] = '\0';
-
-    return str;
 }
 
 int main(int argc, char *argv[]) {
@@ -158,56 +191,31 @@ int main(int argc, char *argv[]) {
     }
     // take all the stuff from the command line and put em in variables 
     int num_threads = atoi(argv[1]);
-
-    //sem init
-    sem_init(&mutex, 0, 1);
-
-    //make the thread safe queue 
-    queue_t *q;
-    q = malloc(sizeof(queue_t));
-    Queue_Init(q);
-    
+      
 /*
-    //pass a pointer of the queue to the threads
-    p_struct_t vals = {q};
+    // count the number of lines in the file
+    int lines_in_file = count_lines();
+    printf("<%d>\n", lines_in_file);
+*/
+    int lines_in_file = 2699;
+    //make the queue 
+    char* buffer[lines_in_file];
+    QUEUE q = {0, 0, lines_in_file, buffer, PTHREAD_MUTEX_INITIALIZER};
+    assert(sem_init(&q.empty, 0, lines_in_file) == 0);
+    assert(sem_init(&q.full, 0, 0) == 0);
+    
+
+    //data to be passed to threads
+    producer_data pd = {&q};
+    consumer_data cd = {&q};
 
     // make the threads that will interact with the queue
     // the sole producer thread
     pthread_t p1;
-    assert(pthread_create(&p1, NULL, producer, &vals) == 0);
+    assert(pthread_create(&p1, NULL, producer_fn, (void*)&pd) == 0);
     
     assert(pthread_join(p1, NULL) == 0);
-*/
 
-    // || so this part below up to line 206 wont be here it will be in the producer but i cant find a way to get all the whitespace out of the line_buf to store it in the queue 
-
-
-    // Open the file for reading
-    char *line_buf = NULL; // a pointer to the line being read
-    size_t line_buf_sz = 0; //gets the size of the line
-    int line_count = 0; // a simple counter that will keep track of the number of lines that are read in from stdin
-    ssize_t line_size; // holds the size of each line as it is being read in | needs to be singed size_t cuz the last line is a neg num
-
-    // Get the first line of the file
-    line_size = getline(&line_buf, &line_buf_sz, stdin);
-
-    // Loop through until we are done with the file // || \\ blank line is getline() == 0 
-    while (line_size >= 0) {
-        //sem_wait(&mutex);
-        line_count++;
-        
-        trim_ws(line_buf);
-
-        // Show the line details
-        printf("line[%06d]: chars=%06zd, buf size=%06zu, contents: <%s>\n", line_count, line_size, line_buf_sz, line_buf);
-        
-        line_size = getline(&line_buf, &line_buf_sz, stdin);
-        
-        //sem_post(&mutex);
-    }    
-
-
-    
     return 0;
     
 }
