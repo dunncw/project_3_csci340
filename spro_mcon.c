@@ -102,45 +102,6 @@ char* trim_ws(char *str){ // this method needs work
 // Thread functions:
 // Thread functions producer
 
-void * producer_fn(void * args){
-
-    producer_data* data = (producer_data*)args;
-
-    // Open the file for reading
-    char *line_buf = NULL; // a pointer to the line being read
-    size_t line_buf_sz = 0; //gets the size of the line
-    int line_count = 0; // a simple counter that will keep track of the number of lines that are read in from stdin
-    ssize_t line_size; // holds the size of each line as it is being read in | needs to be singed size_t cuz the last line is a neg num
-    char* trimed = NULL;
-
-    // Get the first line of the file
-    line_size = getline(&line_buf, &line_buf_sz, stdin);
-    printf("line[%06d]: chars=%06zd, buf size=%06zu, contents: %s", line_count, line_size, line_buf_sz, line_buf);
-
-    // Loop through until we are done with the file
-    while (line_size >= 0) {
-        if(line_size != 0) {//skip any line that is empty
-            line_count++;
-            trimed = trim_ws(line_buf); // trim any whitespace from the line at the front and back but not spaces inbetween words
-            put(data->q, trimed);
-
-            //tessting stuff
-            // Show the line details
-            printf("P| line[%06d]: contents: <%s>\n", line_count, trimed);
-        }
-
-        line_size = getline(&line_buf, &line_buf_sz, stdin);
-    }
-
-    // every time the line is larger than the allocated buffer it increases the buffer sz so its probs very large by the end of the file so we will free the allocated line buffer
-    free(line_buf);
-    line_buf = NULL;
-
-    char* end = "..";
-    put(data->q, end);// the files can't have any non alpha chars so we can use that to send signals || '+' for us is gonna be the end of the file
-  
-    return NULL;      
-}
 
 /*
 // Thread functions consumer
@@ -169,6 +130,7 @@ void * stage_1_fn(void * args)
 int count_lines(){
 
     int count = 0;
+/*
     char *line_buf = NULL; // a pointer to the line being read
     size_t line_buf_sz = 0; //gets the size of the line
     
@@ -178,9 +140,22 @@ int count_lines(){
         if (line_size != 0) // Increment count if this character is newline 
             count = count + 1; 
     }
+*/
 
+    char ch;
+    while((ch=fgetc(stdin))!=EOF) {
+      if(ch=='\n')
+         count++;
+   }
     return count;
 
+}
+
+void display_q(QUEUE* q, int len_q){
+    printf("contents of queue\n");
+    for(int i = 0; i < len_q + 1; i++){
+        printf("line %d: <%s>\n", i, q->buffer[i]);
+    }  
 }
 
 int main(int argc, char *argv[]) {
@@ -191,30 +166,59 @@ int main(int argc, char *argv[]) {
     }
     // take all the stuff from the command line and put em in variables 
     int num_threads = atoi(argv[1]);
-      
-/*
-    // count the number of lines in the file
-    int lines_in_file = count_lines();
-    printf("<%d>\n", lines_in_file);
-*/
-    int lines_in_file = 2699;
+
+    int lines_in_file = 2699;//count_lines();
+    printf("lc: %d\n", lines_in_file);
     //make the queue 
     char* buffer[lines_in_file];
     QUEUE q = {0, 0, lines_in_file, buffer, PTHREAD_MUTEX_INITIALIZER};
     assert(sem_init(&q.empty, 0, lines_in_file) == 0);
     assert(sem_init(&q.full, 0, 0) == 0);
-    
 
+    //read in all the lines from stdin
+
+    // Open the file for reading
+    char *line_buf = NULL; // a pointer to the line being read
+    size_t line_buf_sz = 0; //gets the size of the line
+    int line_count = 0; // a simple counter that will keep track of the number of lines that are read in from stdin
+    ssize_t line_size; // holds the size of each line as it is being read in | needs to be singed size_t cuz the last line is a neg num
+    char* trimed = NULL;
+
+    // Get the first line of the file
+    line_size = getline(&line_buf, &line_buf_sz, stdin);
+    //printf("line[%06d]: chars=%06zd, buf size=%06zu, contents: %s\n", line_count, line_size, line_buf_sz, line_buf);
+
+    // Loop through until we are done with the file
+    while (line_size >= 0) {
+        if(line_size > 1) {//skip any line that is empty
+            line_count++;
+            trimed = trim_ws(line_buf); // trim any whitespace from the line at the front and back but not spaces inbetween words
+            put(&q, trimed);
+
+            //tessting stuff
+            // Show the line details
+            //printf("line[%06d]: chars=%06zd, buf size=%06zu, contents: <%s>\n", line_count, line_size, line_buf_sz, trimed);
+        }
+
+        line_size = getline(&line_buf, &line_buf_sz, stdin);
+    }
+
+    // every time the line is larger than the allocated buffer it increases the buffer sz so its probs very large by the end of the file so we will free the allocated line buffer
+    free(line_buf);
+    line_buf = NULL;
+
+    char* end = "..";
+    put(&q, end);// the files can't have any non alpha chars so we can use that to send signals || '+' for us is gonna be the end of the file
+      
+    printf(" linecount: %d\n", line_count);
     //data to be passed to threads
-    producer_data pd = {&q};
+
+    display_q(&q, line_count);
+
     consumer_data cd = {&q};
 
     // make the threads that will interact with the queue
     // the sole producer thread
-    pthread_t p1;
-    assert(pthread_create(&p1, NULL, producer_fn, (void*)&pd) == 0);
-    
-    assert(pthread_join(p1, NULL) == 0);
 
     return 0;
     
