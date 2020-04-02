@@ -166,6 +166,7 @@ void *consumer_function(void * arg) {
         //if the end signal is sent end all the threads
         if(strcmp(line, end) == 0){
             thr_exit();
+            return NULL;
         }
 
         line_count = line_count - 1;
